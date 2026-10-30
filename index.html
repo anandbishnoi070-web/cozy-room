@@ -89,6 +89,7 @@ canvas#room{position:absolute;inset:0;width:100%;height:100%;display:block}
 label.f{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--muted);font-weight:600}
 .row{display:flex;gap:8px;flex-wrap:wrap}
 .group>input{flex:none}
+input[type=range]{padding:0;accent-color:var(--ember);height:32px;border:0;background:transparent}
 input{flex:1;min-width:0;width:100%;background:var(--night);color:var(--cream);border:1px solid var(--line);border-radius:9px;padding:9px 11px;font:inherit}
 input:focus-visible,button:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
 button{font:inherit;font-weight:700;cursor:pointer;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--cream);padding:8px 12px;min-height:44px;touch-action:manipulation}
@@ -140,6 +141,15 @@ button[disabled]{opacity:.4;cursor:not-allowed}
       <div class="row"><button class="primary" id="signBtn">Sign in with Google</button><button id="testBtn">Test alert</button></div>
       <div class="status" id="stNames"><i></i><span>Optional. Sign in as Zero Stress Zone to show the names of new subscribers.</span></div>
       <p class="hint">Names appear only for people whose subscriptions are public. Everyone else shows as “New subscriber!”.</p>
+    </div>
+    <div class="group">
+      <h4>Sounds <em>music + effects + ambience</em></h4>
+      <div class="row"><button class="primary" id="sndBtn">Turn on sounds</button><button id="sndTest">Test sounds</button></div>
+      <label class="f">Background music<input id="musVol" type="range" min="0" max="100" step="1"></label>
+      <label class="f">Effects volume (cat, thunder, chimes)<input id="fxVol" type="range" min="0" max="100" step="1"></label>
+      <label class="f">Room ambience (rain, crackling fire)<input id="ambVol" type="range" min="0" max="100" step="1"></label>
+      <div class="status" id="stSnd"><i></i><span>Sounds are off.</span></div>
+      <p class="hint">Music, rain, bonfire, thunder and cat sounds come from the <code>sounds</code> folder next to index.html. The three music tracks play one after another and loop.</p>
     </div>
     <div class="group">
       <h4>Manual backup</h4>
@@ -212,12 +222,12 @@ function showAlert(a){showing++;const box=$('alerts'),d=document.createElement('
   box.prepend(d);
   setTimeout(()=>{d.classList.add('out');setTimeout(()=>{d.remove();showing--;pump()},500)},a.cmd?4500:6500)}
 function leftText(){const left=GOAL-state.subs;return left>0?left+' more to 500':'we made it to 500!'}
-function subAlert(name,avatar){notify({kicker:'New subscriber',name,title:name?'Welcome, '+name+'!':'New subscriber!',sub:'thank you · '+leftText(),avatar})}
+function subAlert(name,avatar){sfx('sub');notify({kicker:'New subscriber',name,title:name?'Welcome, '+name+'!':'New subscriber!',sub:'thank you · '+leftText(),avatar})}
 
 function banner(it){
   const el=$('banner');$('bannerName').textContent=it.name;$('bannerCmd').textContent='type '+it.cmd+' in chat to use it';
   el.hidden=false;el.classList.remove('show');void el.offsetWidth;el.classList.add('show');
-  clearTimeout(banner.t);banner.t=setTimeout(()=>el.hidden=true,4700);confetti();
+  clearTimeout(banner.t);banner.t=setTimeout(()=>el.hidden=true,4700);confetti();sfx('unlock');setTimeout(()=>{sfx(it.id);updateAmbience()},900);
 }
 function setCount(n,quiet){const oldPeak=state.peak;state.subs=Math.max(0,Math.min(99999,n));state.peak=Math.max(state.peak,state.subs);
   if(!quiet)ITEMS.filter(i=>i.at>oldPeak&&i.at<=state.peak).forEach((it,k)=>setTimeout(()=>{banner(it);fx[it.id]=T},800+k*4800));
@@ -228,7 +238,7 @@ function addSub(n){if(n>0){const nm=takeName();setCount(state.subs+n);subAlert(n
 function trigger(i){
   const it=ITEMS[i];if(!it)return;
   if(!on(it.id)){notify({cmd:true,kicker:'Locked',title:it.name+' is still locked',sub:'unlocks at '+it.at+' subscribers'});return}
-  const nm=takeName();fx[it.id]=T;
+  const nm=takeName();fx[it.id]=T;sfx(it.id);
   notify({cmd:true,kicker:it.cmd,title:(nm||'Someone')+' '+it.verb,sub:'thanks for the vibe'});
   if(it.id==='thunder')flash=1;
   if(it.id==='fire')for(let k=0;k<(reduce?10:40);k++)parts.push({x:1090+(Math.random()-.5)*90,y:560,vx:(Math.random()-.5)*60,vy:-120-Math.random()*180,life:1.5+Math.random(),c:'255,190,90',s:2+Math.random()*2,g:-20});
@@ -370,7 +380,7 @@ function drawPlaceholders(){
 
 function draw(dt){
   ctx.clearRect(0,0,W,H);
-  if(on('thunder')&&T>nextThunder){flash=1;nextThunder=T+rand(18,40)}
+  if(on('thunder')&&T>nextThunder){flash=1;nextThunder=T+rand(18,40);sfx('thunder',true)}
   flash=Math.max(0,flash-dt*1.4);
   drawWall();drawLightsWire();drawWindow(dt);drawFireplace();drawDesk();drawPlant();drawLampBody();drawCat();
   const lit=ITEMS.filter(i=>on(i.id)).length;
@@ -455,6 +465,76 @@ function signIn(){
     tokenClient.requestAccessToken({prompt:token?'':'consent'});
   }catch(e){setStatus('stNames','err','Sign-in couldn’t start. Check the Client ID and that this address is in Authorized JavaScript origins.')}}
 
+
+/* ---------- Sound: background music playlist + room ambience + event effects (Web Audio). Real recordings live in the "sounds" folder; built-in synth sounds fill any gap. ---------- */
+const SND=Object.assign({on:false,fx:.8,amb:.35,mus:.45},store.get('zsz.sound.v1',{}));if(SND.mus==null)SND.mus=.45;
+const PLAYLIST=[{src:'sounds/music1.mp3',name:'Pulsar · The Grey Room / Density & Time'},{src:'sounds/music2.mp3',name:'Frame-Dragging · The Grey Room / Density & Time'},{src:'sounds/music3.mp3',name:'Rapid Unscheduled Disassembly · The Grey Room / Density & Time'}];
+let AC=null,master=null,fxBus=null,ambBus=null,musBus=null,noiseBuf=null,brownBuf=null,amb={},music=null,track=0,fireBoost=null;const FILES={};
+const FILE_IDS=['cat','thunder','sub','unlock','lamp','plant','fire','lights','snow'];
+function saveSnd(){store.set('zsz.sound.v1',SND)}
+function audioInit(){if(AC)return;const C=window.AudioContext||window.webkitAudioContext;if(!C)return;AC=new C();
+  master=AC.createGain();master.connect(AC.destination);
+  fxBus=AC.createGain();fxBus.gain.value=SND.fx;fxBus.connect(master);ambBus=AC.createGain();ambBus.gain.value=SND.amb;ambBus.connect(master);musBus=AC.createGain();musBus.gain.value=SND.mus;musBus.connect(master);
+  const n=AC.sampleRate*2;noiseBuf=AC.createBuffer(1,n,AC.sampleRate);const d=noiseBuf.getChannelData(0);for(let i=0;i<n;i++)d[i]=Math.random()*2-1;
+  brownBuf=AC.createBuffer(1,n,AC.sampleRate);const b=brownBuf.getChannelData(0);let l=0;for(let i=0;i<n;i++){l=(l+.02*(Math.random()*2-1))/1.02;b[i]=l*3.5}
+  if(location.protocol!=='file:')FILE_IDS.forEach(id=>fetch('sounds/'+id+'.mp3').then(r=>r.ok?r.arrayBuffer():null).then(a=>a&&AC.decodeAudioData(a)).then(buf=>{if(buf)FILES[id]=buf}).catch(()=>{}))}
+function wake(){if(!SND.on)return;audioInit();if(AC&&AC.state==='suspended')AC.resume().then(()=>{updateAmbience();startMusic();sndStatus()});else{updateAmbience();startMusic()}sndStatus()}
+const now=()=>AC.currentTime;
+function env(g,t,a,peak,dec){g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(peak,t+a);g.gain.exponentialRampToValueAtTime(0.0001,t+a+dec)}
+function noise(t,dur,{type='lowpass',f=1000,q=.7,peak=.5,a=.01,buf=noiseBuf,out=fxBus,f2}={}){const s=AC.createBufferSource();s.buffer=buf;s.loop=true;const fl=AC.createBiquadFilter();fl.type=type;fl.frequency.setValueAtTime(f,t);if(f2)fl.frequency.exponentialRampToValueAtTime(f2,t+dur);fl.Q.value=q;const g=AC.createGain();env(g,t,a,peak,dur);s.connect(fl).connect(g).connect(out);s.start(t,Math.random()*1.5);s.stop(t+a+dur+.05)}
+function tone(t,freq,dur,{type='sine',peak=.25,a=.005,glide,out=fxBus}={}){const o=AC.createOscillator();o.type=type;o.frequency.setValueAtTime(freq,t);if(glide)o.frequency.exponentialRampToValueAtTime(glide,t+dur);const g=AC.createGain();env(g,t,a,peak,dur);o.connect(g).connect(out);o.start(t);o.stop(t+a+dur+.05)}
+function bell(t,f,peak=.18){tone(t,f,1.4,{peak});tone(t,f*2.01,.8,{peak:peak*.35});tone(t,f*3.02,.4,{peak:peak*.15})}
+/* Play part of a recording with a gentle fade in and out */
+function clip(id,{gain=1,offset=0,dur=null,fadeIn=.4,fadeOut=1.5}={}){const buf=FILES[id],t=now()+.02,len=Math.min(dur||buf.duration,buf.duration-offset);
+  const s=AC.createBufferSource();s.buffer=buf;const g=AC.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(gain,t+fadeIn);g.gain.setValueAtTime(gain,t+Math.max(fadeIn,len-fadeOut));g.gain.exponentialRampToValueAtTime(0.0001,t+len);
+  s.connect(g).connect(fxBus);s.start(t,offset);s.stop(t+len+.05)}
+const SYN={
+  sub(t){bell(t,659.3,.2);bell(t+.14,987.8,.17);bell(t+.3,1318.5,.12)},
+  unlock(t){[523.3,659.3,784,1046.5].forEach((f,i)=>bell(t+i*.11,f,.14))},
+  lamp(t){noise(t,.03,{type:'highpass',f:3000,peak:.5,a:.002});tone(t,1800,.05,{type:'square',peak:.05});tone(t+.05,110,.6,{type:'sine',peak:.05,a:.05})},
+  plant(t){noise(t,1.4,{type:'bandpass',f:900,q:1.2,peak:.12,a:.15,f2:500});for(let i=0;i<9;i++){const s=t+.15+i*.13+Math.random()*.06,f=500+Math.random()*700;tone(s,f,.09,{peak:.07,glide:f*1.9})}},
+  fire(t){noise(t,1.6,{type:'bandpass',f:1200,q:.6,peak:.18,a:.2,f2:400});for(let i=0;i<14;i++)noise(t+Math.random()*1.6,.012+Math.random()*.02,{type:'highpass',f:1500+Math.random()*3000,peak:.2+Math.random()*.3,a:.001})},
+  cat(t){const meow=(s,f0,f1,f2,d)=>{const o=AC.createOscillator();o.type='sawtooth';o.frequency.setValueAtTime(f0,s);o.frequency.linearRampToValueAtTime(f1,s+d*.35);o.frequency.linearRampToValueAtTime(f2,s+d);
+      const fl=AC.createBiquadFilter();fl.type='bandpass';fl.Q.value=4;fl.frequency.setValueAtTime(900,s);fl.frequency.linearRampToValueAtTime(1700,s+d*.35);fl.frequency.linearRampToValueAtTime(1000,s+d);
+      const g=AC.createGain();g.gain.setValueAtTime(.0001,s);g.gain.exponentialRampToValueAtTime(.22,s+.06);g.gain.setValueAtTime(.22,s+d*.6);g.gain.exponentialRampToValueAtTime(.0001,s+d);o.connect(fl).connect(g).connect(fxBus);o.start(s);o.stop(s+d+.05)};
+    meow(t,480,760,430,.75);meow(t+1.1,520,820,460,.6)},
+  thunder(t,soft){const k=soft?.5:1;noise(t,.25,{type:'highpass',f:1800,peak:.35*k,a:.003});noise(t+.05,3.8,{type:'lowpass',f:320,peak:.9*k,a:.05,buf:brownBuf,f2:90});noise(t+.4,3.2,{type:'lowpass',f:160,peak:.6*k,a:.4,buf:brownBuf})},
+  lights(t){[1046.5,1318.5,1568,2093,1568,2637].forEach((f,i)=>bell(t+i*.12,f,.09))},
+  snow(t){noise(t,5,{type:'bandpass',f:400,q:3,peak:.18,a:1.5,f2:1200});[1568,2093,2349,3136].forEach((f,i)=>bell(t+.6+i*.5,f,.06))}
+};
+let lastSfx={};
+function sfx(id,soft){if(!SND.on)return;const tn=Date.now();if(tn-(lastSfx[id]||0)<1200)return;lastSfx[id]=tn;audioInit();if(!AC||AC.state!=='running')return;const t=now()+.02;
+  if(id==='cat'&&FILES.cat){clip('cat',{gain:1,offset:Math.random()*Math.max(0,FILES.cat.duration-9),dur:8})}
+  else if(id==='thunder'&&FILES.thunder){const b=FILES.thunder;clip('thunder',{gain:soft?.55:1,offset:soft?Math.random()*Math.max(0,b.duration-12):0,dur:soft?10:14,fadeIn:soft?.8:.05,fadeOut:3})}
+  else if(id==='fire'){SYN.fire(t);boostFire()}
+  else if(FILES[id])clip(id,{dur:8});else if(SYN[id])SYN[id](t,soft)}
+/* Streaming loops (rain, bonfire) through <audio>, so long files don't fill the iPad's memory */
+function streamLoop(src,gain,fallback){const el=new Audio();el.src=src;el.loop=true;el.preload='auto';const g=AC.createGain();g.gain.value=gain;let node=null,fb=null;
+  try{node=AC.createMediaElementSource(el);node.connect(g).connect(ambBus)}catch(e){}
+  el.addEventListener('error',()=>{if(!fb)fb=fallback()});el.play().catch(()=>{});
+  return{gain:g,stop:()=>{el.pause();el.src='';if(fb)fb.stop();try{node&&node.disconnect()}catch(e){}}}}
+function synthRain(){const s=AC.createBufferSource();s.buffer=noiseBuf;s.loop=true;const hp=AC.createBiquadFilter();hp.type='highpass';hp.frequency.value=900;const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=7000;const g=AC.createGain();g.gain.value=.09;s.connect(hp).connect(lp).connect(g).connect(ambBus);s.start();
+  const iv=setInterval(()=>{if(AC.state==='running')noise(now(),.02,{type:'bandpass',f:2500+Math.random()*3000,q:3,peak:.05,a:.002,out:ambBus})},140);return{stop:()=>{s.stop();clearInterval(iv)}}}
+function synthFire(){const s=AC.createBufferSource();s.buffer=brownBuf;s.loop=true;const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=380;const g=AC.createGain();g.gain.value=.22;s.connect(lp).connect(g).connect(ambBus);s.start();
+  const iv=setInterval(()=>{if(AC.state==='running'&&Math.random()<.55)noise(now(),.01+Math.random()*.02,{type:'highpass',f:1800+Math.random()*2500,peak:.12+Math.random()*.2,a:.001,out:ambBus})},180);return{stop:()=>{s.stop();clearInterval(iv)}}}
+function boostFire(){const f=amb.fire;if(!f||!f.gain)return;const t=now();f.gain.gain.cancelScheduledValues(t);f.gain.gain.setValueAtTime(f.gain.gain.value,t);f.gain.gain.linearRampToValueAtTime(2.2,t+.6);f.gain.gain.linearRampToValueAtTime(.9,t+6)}
+function ambLoop(key,want,make){if(want&&!amb[key])amb[key]=make();if(!want&&amb[key]){amb[key].stop();delete amb[key]}}
+function updateAmbience(){if(!AC)return;const live=SND.on&&AC.state==='running';const web=location.protocol!=='file:';
+  ambLoop('rain',live&&!on('snow'),()=>web?streamLoop('sounds/rain.mp3',.8,synthRain):synthRain());
+  ambLoop('fire',live&&on('fire'),()=>web?streamLoop('sounds/fireloop.mp3',.9,synthFire):synthFire());
+  ambLoop('wind',live&&on('snow'),()=>{const s=AC.createBufferSource();s.buffer=noiseBuf;s.loop=true;const bp=AC.createBiquadFilter();bp.type='bandpass';bp.Q.value=2.5;bp.frequency.value=500;const lfo=AC.createOscillator();lfo.frequency.value=.07;const lg=AC.createGain();lg.gain.value=250;lfo.connect(lg).connect(bp.frequency);const g=AC.createGain();g.gain.value=.12;s.connect(bp).connect(g).connect(ambBus);s.start();lfo.start();return{stop:()=>{s.stop();lfo.stop()}}})}
+/* Background music: plays the three tracks one after another and loops the list */
+function startMusic(){if(!AC||!SND.on||AC.state!=='running'||location.protocol==='file:')return;
+  if(!music){music=new Audio();music.preload='auto';try{AC.createMediaElementSource(music).connect(musBus)}catch(e){}
+    music.addEventListener('ended',()=>{track=(track+1)%PLAYLIST.length;playTrack()});
+    music.addEventListener('error',()=>{music.failed=(music.failed||0)+1;if(music.failed<PLAYLIST.length){track=(track+1)%PLAYLIST.length;playTrack()}else{music.dead=true;sndStatus()}});playTrack()}
+  else if(music.paused&&!music.dead)music.play().catch(()=>{})}
+function playTrack(){music.src=PLAYLIST[track].src;music.play().then(()=>{music.failed=0;sndStatus()}).catch(()=>{})}
+function stopMusic(){if(music)music.pause()}
+function sndStatus(){const b=$('sndBtn');if(!b)return;b.textContent=SND.on?'Sounds on ✓':'Turn on sounds';b.classList.toggle('primary',!SND.on);
+  if(!SND.on)setStatus('stSnd','','Sounds are off.');else if(!AC||AC.state!=='running')setStatus('stSnd','warn','Tap anywhere on the page once to wake the sounds.');
+  else setStatus('stSnd','ok',music&&!music.dead&&!music.paused?'Now playing: '+PLAYLIST[track].name:music&&music.dead?'Sounds on · music files not found in the sounds folder':'Sounds on · room ambience playing')}
+
 /* ---------- Controls ---------- */
 function toggleStream(){document.body.classList.toggle('stream');$('panel').hidden=document.body.classList.contains('stream')}
 function goFull(){const s=document.documentElement;try{document.fullscreenElement?document.exitFullscreen():(s.requestFullscreen?s.requestFullscreen().catch(()=>{}):s.webkitRequestFullscreen&&s.webkitRequestFullscreen())}catch(err){}}
@@ -469,6 +549,13 @@ $('saveBtn').onclick=()=>{settings.apiKey=$('apiKey').value.trim();settings.chan
 $('checkBtn').onclick=()=>poll();
 $('signBtn').onclick=signIn;
 $('testBtn').onclick=()=>subAlert('Test Viewer',null);
+$('fxVol').value=Math.round(SND.fx*100);$('ambVol').value=Math.round(SND.amb*100);
+$('sndBtn').onclick=()=>{SND.on=!SND.on;saveSnd();if(SND.on){audioInit();AC&&AC.resume().then(()=>{updateAmbience();startMusic();sndStatus();sfx('sub')})}else{updateAmbience();stopMusic()}sndStatus()};
+$('sndTest').onclick=()=>{if(!SND.on){SND.on=true;saveSnd()}audioInit();AC.resume().then(()=>{updateAmbience();startMusic();sndStatus();['sub','lamp','plant','fire','cat','thunder','lights','snow'].forEach((id,i)=>setTimeout(()=>sfx(id),i*2600))})};
+$('fxVol').oninput=e=>{SND.fx=e.target.value/100;saveSnd();if(fxBus)fxBus.gain.value=SND.fx};
+$('musVol').value=Math.round(SND.mus*100);$('musVol').oninput=e=>{SND.mus=e.target.value/100;saveSnd();if(musBus)musBus.gain.value=SND.mus};
+$('ambVol').oninput=e=>{SND.amb=e.target.value/100;saveSnd();if(ambBus)ambBus.gain.value=SND.amb};
+['pointerdown','keydown','touchend'].forEach(ev=>document.addEventListener(ev,wake,{passive:true}));
 document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'||e.ctrlKey||e.metaKey||e.altKey)return;
   const k=e.key.toLowerCase();
@@ -478,7 +565,7 @@ document.addEventListener('keydown',e=>{
 
 /* ---------- Boot ---------- */
 $('apiKey').value=settings.apiKey;$('channelId').value=settings.channelId;$('clientId').value=settings.clientId;
-buildStatic();updateHUD();requestAnimationFrame(frame);
+buildStatic();updateHUD();requestAnimationFrame(frame);sndStatus();
 loadGsi();poll();setInterval(poll,POLL_MS);
 </script>
 </body>
